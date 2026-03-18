@@ -1,16 +1,11 @@
-import http from 'k6/http';
-import { sleep, check } from 'k6';
+const express = require('express');
+const app = express();
+const port = 3000;
 
-export const options = {
-  vus: 10, // 10 usuarios virtuales simultáneos
-  duration: '30s', // duración de la prueba
-};
+app.get('/', (req, res) => {
+    res.send('<h1>¡Servidor de Producción Funcionando!</h1><p>Login básico activo.</p>');
+});
 
-export default function () {
-  // Ajusta la URL a la IP de tu servidor de Google Cloud
-  const res = http.get('http://TU_IP_ESTATICA'); 
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-  });
-  sleep(1);
-}
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Servidor escuchando en el puerto ${port}`);
+});

@@ -2,15 +2,13 @@ import http from 'k6/http';
 import { sleep, check } from 'k6';
 
 export const options = {
-  vus: 10, // 10 usuarios virtuales simultáneos
-  duration: '30s', // duración de la prueba
+  vus: 10, 
+  duration: '10s', 
 };
 
 export default function () {
-  // Ajusta la URL a la IP de tu servidor de Google Cloud
-  const res = http.get('http://TU_IP_ESTATICA'); 
-  check(res, {
-    'status is 200': (r) => r.status === 200,
-  });
+  // REEMPLAZA ESTO con tu IP real de Google Cloud
+  const res = http.get('http://35.226.198.244'); 
+  check(res, { 'status is 200': (r) => r.status === 200 });
   sleep(1);
 }
