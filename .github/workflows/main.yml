@@ -1,25 +1,28 @@
-name: CI Pipeline - Análisis SAST con SonarQube
+name: CI/CD Pipeline - Sonar, k6, Docker & Deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [ "main" ]
   pull_request:
-    branches:
-      - main
+    branches: [ "main" ]
+
+env:
+  REGISTRY: ghcr.io
+  # CAMBIA ESTO: tu_usuario_github/nombre_del_repositorio
+  IMAGE_NAME: owendev1099/DebOps
 
 jobs:
-  sonarQube-analysis:
-    name: Análisis de Calidad de Código
+  # 1. ANÁLISIS DE CALIDAD (SonarQube)
+  quality-analysis:
+    name: Análisis SAST (SonarQube)
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Clonación del repositorio (Checkout)
-        uses: actions/checkout@v3
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Requerido por SonarQube para un análisis histórico completo
+          fetch-depth: 0
 
-      - name: Ejecución de Escáner SonarQube
+      - name: Ejecución de SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -27,4 +30,87 @@ jobs:
         with:
           args: >
             -Dsonar.projectKey=mi-proyecto-gestion-sw
-            -Dsonar.qualitygate.wait=true
+            -Dsonar.sources=.
+            -Dsonar.scanner.metadataFilePath=${{ github.workspace }}/report-task.txt
+
+      - name: Verificar Quality Gate de SonarQube
+        uses: sonarsource/sonarqube-quality-gate-action@master
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          scanMetadataReportFile: ${{ github.workspace }}/report-task.txt
+
+  # 2. PRUEBA DE RENDIMIENTO (k6)
+  performance-test:
+    name: Pruebas de Carga (k6)
+    needs: quality-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Ejecución de k6
+        uses: grafana/k6-action@v0.3.1
+        with:
+          filename: script_k6.js # Asegúrate de que este archivo exista en tu repo
+
+  # 3. DOCKERIZACIÓN (GHCR)
+  build-and-push:
+    name: Build y Push a GHCR
+    needs: performance-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Login en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir y Subir Imagen
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+
+  # 4. DESPLIEGUE (Servidor Producción)
+  deploy:
+    name: Despliegue en Servidor Cloud
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Despliegue vía SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            # Autenticarse en el registro desde el servidor
+            echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # Detener el contenedor actual si existe
+            docker stop my-node-app || true
+            docker rm my-node-app || true
+            
+            # Limpiar imágenes antiguas para ahorrar espacio en la VM
+            docker image prune -f
+            
+            # Bajar la versión más reciente
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            
+            # Ejecutar el nuevo contenedor (Puerto 80 del servidor -> 3000 de tu Node app)
+            docker run -d \
+              --name my-node-app \
+              -p 80:3000 \
+              --restart always \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
