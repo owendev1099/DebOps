@@ -8,8 +8,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  # CAMBIA ESTO: tu_usuario_github/nombre_del_repositorio
-  IMAGE_NAME: owendev1099/DebOps
+  IMAGE_NAME: owendev1099/debops  # <--- Todo en minúsculas aquí
 
 jobs:
   # 1. ANÁLISIS DE CALIDAD (SonarQube)
