@@ -1,18 +1,25 @@
 version: '3.8'
 
 services:
-  # 1. Nuestra Aplicación Web
+  # 1. Tu Aplicación Node.js (Usando la imagen del registro)
   app-node:
-    build: .
+    image: ghcr.io/owendev1099/debops:latest
     container_name: app-node
+    restart: always
     ports:
       - "3000:3000"
+    # Añadimos salud del contenedor (opcional pero recomendado)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
-  # 2. El Agente que lee el hardware de la Computadora (CPU, RAM, Disco)
+  # 2. Node Exporter (Métricas del Host)
   node-exporter:
     image: prom/node-exporter:latest
     container_name: node-exporter
-    # Estos volúmenes permiten que el contenedor vea el hardware real de tu PC
+    restart: unless-stopped
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -25,22 +32,33 @@ services:
     ports:
       - "9100:9100"
 
-  # 3. La Base de Datos de Métricas
+  # 3. Prometheus (Base de datos de tiempo real)
   prometheus:
     image: prom/prometheus:latest
     container_name: prometheus
+    restart: always
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      # Es recomendable persistir los datos para no perder métricas al reiniciar
+      - prometheus_data:/prometheus
     ports:
       - "9090:9090"
 
-  # 4. El Visualizador Gráfico
+  # 4. Grafana (Visualización)
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
+    restart: always
     ports:
-      - "3001:3000" # Entraremos a Grafana por el puerto 3001
+      - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
     depends_on:
       - prometheus
+
+# Volúmenes persistentes
+volumes:
+  prometheus_data:
+  grafana_data:
