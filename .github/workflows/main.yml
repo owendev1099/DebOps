@@ -2,72 +2,47 @@ name: CI/CD Pipeline - Sonar, k6, Docker & Deploy
 
 on:
   push:
-    branches:
-      - "main"
-      - "develop"
-      - "release/**"
-    tags:
-      - "v*"
+    branches: ["main", "develop"]
   pull_request:
-    branches:
-      - "main"
-      - "develop"
-
-permissions:
-  contents: read
-  packages: write
-  id-token: write
+    branches: ["main"]
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: owendev1099/debops # <--- Todo en minúsculas aquí
+  IMAGE_NAME: owendev1099/debops
+  WORKDIR: /home/${{ secrets.SERVER_USER }}/app-monitoring # Carpeta donde vivirá el proyecto en la VM
 
 jobs:
-  # 1. ANÁLISIS DE CALIDAD (SonarQube)
+  # 1. ANÁLISIS DE CALIDAD
   quality-analysis:
     name: Análisis SAST (SonarQube)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del repositorio
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Ejecución de SonarQube Scan
+      - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@master
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
-            -Dsonar.projectKey=mi-proyecto-gestion-sw
+            -Dsonar.projectKey=mi-proyecto-debops
             -Dsonar.sources=.
-            -Dsonar.scanner.metadataFilePath=${{ github.workspace }}/report-task.txt
 
-      - name: Verificar Quality Gate de SonarQube
-        uses: sonarsource/sonarqube-quality-gate-action@master
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          scanMetadataReportFile: ${{ github.workspace }}/report-task.txt
-
-  # 2. PRUEBA DE RENDIMIENTO (k6)
+  # 2. PRUEBA DE RENDIMIENTO
   performance-test:
     name: Pruebas de Carga (k6)
     needs: quality-analysis
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del repositorio
-        uses: actions/checkout@v4
-
-      - name: Ejecución de k6
+      - uses: actions/checkout@v4
+      - name: Run k6 test
         uses: grafana/k6-action@v0.3.1
         with:
-          filename: script_k6.js # Asegúrate de que este archivo exista en tu repo
+          filename: script_k6.js
 
-  # 3. DOCKERIZACIÓN (GHCR)
+  # 3. CONSTRUCCIÓN DE IMAGEN
   build-and-push:
     name: Build y Push a GHCR
     needs: performance-test
@@ -76,52 +51,48 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout del repositorio
-        uses: actions/checkout@v4
-
-      - name: Login en GitHub Container Registry
+      - uses: actions/checkout@v4
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Construir y Subir Imagen
+      - name: Build and Push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-  # 4. DESPLIEGUE (Servidor Producción)
+  # 4. DESPLIEGUE AUTOMATIZADO
   deploy:
-    name: Despliegue en Servidor Cloud
+    name: Deploy to Production VM
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
-      - name: Despliegue vía SSH
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Autenticarse en el registro desde el servidor
+            # 1. Login en el registro desde la VM
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # 2. Crear carpeta de trabajo si no existe
+            mkdir -p ${{ env.WORKDIR }}
+            cd ${{ env.WORKDIR }}
 
-            # Detener el contenedor actual si existe
-            docker stop my-node-app || true
-            docker rm my-node-app || true
+            # 3. Descargar solo los archivos de configuración necesarios del repo
+            # Esto evita clonar todo el código fuente en producción
+            curl -O https://raw.githubusercontent.com/owendev1099/DebOps/main/docker-compose.yml
+            curl -O https://raw.githubusercontent.com/owendev1099/DebOps/main/prometheus.yml
 
-            # Limpiar imágenes antiguas para ahorrar espacio en la VM
+            # 4. Actualizar imagen y reiniciar servicios
+            docker compose pull
+            docker compose up -d --remove-orphans
+            
+            # 5. Limpieza de imágenes huérfanas
             docker image prune -f
-
-            # Bajar la versión más reciente
-            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-
-            # Ejecutar el nuevo contenedor (Puerto 80 del servidor -> 3000 de tu Node app)
-            docker run -d \
-              --name my-node-app \
-              -p 80:3000 \
-              --restart always \
-              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
