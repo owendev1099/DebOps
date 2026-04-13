@@ -64,7 +64,7 @@ jobs:
           push: true
           tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
-  # 4. DESPLIEGUE AUTOMATIZADO (BLUE-GREEN)
+  # 4. DESPLIEGUE AUTOMATIZADO CON LÓGICA DE INVERSIÓN
   deploy:
     name: Deploy to Production & Switch Traffic
     needs: build-and-push
@@ -77,20 +77,17 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Entrar a la carpeta absoluta verificada en la VM
-            cd /home/g2022371099/DebOps || { echo "Error: Carpeta DebOps no encontrada"; exit 1; }
+            # Entrar a la carpeta absoluta verificada
+            cd /home/g2022371099/DebOps || { echo "Error: Carpeta no encontrada"; exit 1; }
 
             # 1. MECANISMO DE PERSISTENCIA
-            # Leemos el archivo para saber quién está productivo actualmente
             if [ -f current_deploy.env ]; then
               source current_deploy.env
             else
-              # Si el archivo no existe, inicializamos en blue
               CURRENT_COLOR="blue"
             fi
 
             # 2. LÓGICA DE INVERSIÓN
-            # Determinamos el objetivo (Si es blue -> green, si es green -> blue)
             if [ "$CURRENT_COLOR" == "blue" ]; then
               TARGET_COLOR="green"
               TARGET_IP="192.168.1.20"
@@ -102,22 +99,22 @@ jobs:
             fi
 
             echo ">>> Entorno actual detectado: $CURRENT_COLOR"
-            echo ">>> Iniciando conmutación hacia: $TARGET_COLOR ($TARGET_IP:$TARGET_PORT)"
+            echo ">>> Iniciando cambio hacia: $TARGET_COLOR ($TARGET_IP:$TARGET_PORT)"
 
             # 3. SUSTITUCIÓN AUTOMÁTICA (envsubst)
-            # Exportamos para que envsubst las reconozca
             export APP_TARGET_IP=$TARGET_IP
             export APP_TARGET_PORT=$TARGET_PORT
             export DEPLOYMENT_COLOR=$TARGET_COLOR
 
-            # Inyectamos variables en el template
-            envsubst '${APP_TARGET_IP} ${APP_TARGET_PORT} ${DEPLOYMENT_COLOR}' < nginx.conf.template > default.conf
+            # Escribimos en /tmp para evitar errores de permisos de escritura directos
+            envsubst '${APP_TARGET_IP} ${APP_TARGET_PORT} ${DEPLOYMENT_COLOR}' < nginx.conf.template > /tmp/default.conf
             
             # 4. VALIDACIÓN Y RECARGA DE NGINX
-            sudo mv default.conf /etc/nginx/conf.d/default.conf
+            # Movemos el archivo generado usando sudo
+            sudo mv /tmp/default.conf /etc/nginx/conf.d/default.conf
             sudo nginx -t && sudo systemctl reload nginx
 
-            # 5. ACTUALIZAR EL ESTADO PARA EL PRÓXIMO PUSH
-            echo "CURRENT_COLOR=$TARGET_COLOR" > current_deploy.env
+            # 5. ACTUALIZAR EL ESTADO (Usando sudo para asegurar la persistencia)
+            sudo sh -c "echo 'CURRENT_COLOR=$TARGET_COLOR' > /home/g2022371099/DebOps/current_deploy.env"
             
-            echo ">>> DESPLIEGUE FINALIZADO: El tráfico ahora está en $TARGET_COLOR"
+            echo ">>> PROCESO FINALIZADO EXITOSAMENTE: El tráfico ahora está en $TARGET_COLOR"
