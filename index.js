@@ -32,7 +32,7 @@ app.use((req, res, next) => {
 
 app.get("/", (req, res) => {
   res.send(
-    "<h1>¡Servidor de Producción Funcionando!</h1><p>Login básico activo.</p>",
+    "<h1>¡Servidor de Producción Funcionandoooo, prueba switch!</h1><p>Login básico activo.</p>",
   );
 });
 
