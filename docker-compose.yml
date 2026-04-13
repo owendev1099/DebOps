@@ -10,7 +10,7 @@ services:
       - "3000:3000"
     # Añadimos salud del contenedor (opcional pero recomendado)
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://35.226.198.244:3000/metrics"]
+      test: ["CMD", "curl", "-f", "http://localhost:3000/metrics"]
       interval: 30s
       timeout: 10s
       retries: 3
